@@ -1,17 +1,15 @@
 terraform {
   backend "s3" {
-    bucket = "YOUR_BUCKET"
-    key    = "YOUR_KEY"
-    region = "YOUR_REGION"
+    bucket = "ops-account-dasan"
+    key    = "terraform/backend"
+    region = "us-east-2"
   }
 }
-
 locals {
-  env_name         = "staging"
-  aws_region       = "YOUR_REGION"
+  env_name         = "sandbox"
+  aws_region       = "us-east-2"
   k8s_cluster_name = "ms-cluster"
 }
-
 variable "mysql_password" {
   type        = string
   description = "Expected to be retrieved from environment variable TF_VAR_mysql_password"
@@ -22,11 +20,13 @@ provider "aws" {
 }
 
 data "aws_eks_cluster" "msur" {
-  name              = module.aws-kubernetes-cluster.eks_cluster_id
+  name = module.aws-eks.eks_cluster_id
 }
 
+
+# Network configuration
 module "aws-network" {
-  source = "github.com/implementing-microservices/module-aws-network"
+  source = "github.com/aravindvn/module-aws-network"
 
   env_name              = local.env_name
   vpc_name              = "msur-VPC"
@@ -39,8 +39,9 @@ module "aws-network" {
   private_subnet_b_cidr = "10.10.192.0/18"
 }
 
-module "aws-kubernetes-cluster" {
-  source = "github.com/implementing-microservices/module-aws-kubernetes"
+# EKS configuration 
+module "aws-eks" {
+  source = "github.com/aravindvn/module-aws-kubernetes"
 
   ms_namespace       = "microservices"
   env_name           = local.env_name
@@ -54,50 +55,28 @@ module "aws-kubernetes-cluster" {
   nodegroup_instance_types = ["t3.medium"]
   nodegroup_desired_size   = 1
   nodegroup_min_size       = 1
-  nodegroup_max_size       = 5
+  nodegroup_max_size       = 3
 }
 
-# Create namespace
-# Use kubernetes provider to work with the kubernetes cluster API
-provider "kubernetes" {
-  load_config_file       = false
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.msur.certificate_authority.0.data)
-  host                   = data.aws_eks_cluster.msur.endpoint
-  exec {
-    api_version = "client.authentication.k8s.io/v1alpha1"
-    command     = "aws-iam-authenticator"
-    args        = ["token", "-i", "${data.aws_eks_cluster.msur.name}"]
-  }
-}
-
-# Create a namespace for microservice pods
-resource "kubernetes_namespace" "ms-namespace" {
-  metadata {
-    name = "microservices"
-  }
-}
-
+# GitOps Configuration
 module "argo-cd-server" {
-  source = "github.com/implementing-microservices/module-argo-cd"
+  source = "github.com/aravindvn/module-argo-cd"
 
-  aws_region            = local.aws_region
-  kubernetes_cluster_id = data.aws_eks_cluster.msur.id
-
-  kubernetes_cluster_name      = module.aws-kubernetes-cluster.eks_cluster_name
-  kubernetes_cluster_cert_data = module.aws-kubernetes-cluster.eks_cluster_certificate_data
-  kubernetes_cluster_endpoint  = module.aws-kubernetes-cluster.eks_cluster_endpoint
-
-  eks_nodegroup_id = module.aws-kubernetes-cluster.eks_cluster_nodegroup_id
+  kubernetes_cluster_id        = module.aws-eks.eks_cluster_id
+  kubernetes_cluster_name      = module.aws-eks.eks_cluster_name
+  kubernetes_cluster_cert_data = module.aws-eks.eks_cluster_certificate_data
+  kubernetes_cluster_endpoint  = module.aws-eks.eks_cluster_endpoint
+  eks_nodegroup_id             = module.aws-eks.eks_cluster_nodegroup_id
 }
 
 module "aws-databases" {
-  source = "github.com/implementing-microservices/module-aws-db"
+  source = "github.com/aravindvn/module-aws-db"
 
   aws_region     = local.aws_region
   mysql_password = var.mysql_password
   vpc_id         = module.aws-network.vpc_id
   eks_id         = data.aws_eks_cluster.msur.id
-  eks_sg_id      = module.aws-kubernetes-cluster.eks_cluster_security_group_id
+  eks_sg_id      = module.aws-eks.eks_cluster_security_group_id
   subnet_a_id    = module.aws-network.private_subnet_ids[0]
   subnet_b_id    = module.aws-network.private_subnet_ids[1]
   env_name       = local.env_name
@@ -105,13 +84,13 @@ module "aws-databases" {
 }
 
 module "traefik" {
-  source = "github.com/implementing-microservices/module-aws-traefik/"
+  source = "github.com/aravindvn/module-aws-traefik/"
 
   aws_region                   = local.aws_region
   kubernetes_cluster_id        = data.aws_eks_cluster.msur.id
-  kubernetes_cluster_name      = module.aws-kubernetes-cluster.eks_cluster_name
-  kubernetes_cluster_cert_data = module.aws-kubernetes-cluster.eks_cluster_certificate_data
-  kubernetes_cluster_endpoint  = module.aws-kubernetes-cluster.eks_cluster_endpoint
+  kubernetes_cluster_name      = module.aws-eks.eks_cluster_name
+  kubernetes_cluster_cert_data = module.aws-eks.eks_cluster_certificate_data
+  kubernetes_cluster_endpoint  = module.aws-eks.eks_cluster_endpoint
 
-  eks_nodegroup_id = module.aws-kubernetes-cluster.eks_cluster_nodegroup_id
+  eks_nodegroup_id = module.aws-eks.eks_cluster_nodegroup_id
 }
