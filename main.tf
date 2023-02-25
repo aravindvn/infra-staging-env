@@ -6,7 +6,7 @@ terraform {
   }
 }
 locals {
-  env_name         = "sandbox"
+  env_name         = "staging"
   aws_region       = "us-east-2"
   k8s_cluster_name = "ms-cluster"
 }
